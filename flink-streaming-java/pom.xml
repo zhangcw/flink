@@ -29,7 +29,9 @@ under the License.
 		<relativePath>..</relativePath>
 	</parent>
 
+	<groupId>com.tencent.bk.base.dataflow</groupId>
 	<artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
+	<version>${bk.base.version}</version>
 	<name>flink-streaming-java</name>
 
 	<packaging>jar</packaging>
@@ -41,7 +43,7 @@ under the License.
 		<dependency>
 			<groupId>org.apache.flink</groupId>
 			<artifactId>flink-core</artifactId>
-			<version>${project.version}</version>
+			<version>${parent.version}</version>
 			<scope>test</scope>
 			<type>test-jar</type>
 		</dependency>
@@ -49,13 +51,13 @@ under the License.
 		<dependency>
 			<groupId>org.apache.flink</groupId>
 			<artifactId>flink-runtime_${scala.binary.version}</artifactId>
-			<version>${project.version}</version>
+			<version>${parent.version}</version>
 		</dependency>
 
 		<dependency>
 			<groupId>org.apache.flink</groupId>
 			<artifactId>flink-clients_${scala.binary.version}</artifactId>
-			<version>${project.version}</version>
+			<version>${parent.version}</version>
 		</dependency>
 
 		<dependency>
@@ -74,16 +76,47 @@ under the License.
 		<dependency>
 			<groupId>org.apache.flink</groupId>
 			<artifactId>flink-test-utils-junit</artifactId>
+			<version>${parent.version}</version>
 		</dependency>
 
 		<dependency>
 			<groupId>org.apache.flink</groupId>
 			<artifactId>flink-runtime_${scala.binary.version}</artifactId>
-			<version>${project.version}</version>
+			<version>${parent.version}</version>
 			<scope>test</scope>
 			<type>test-jar</type>
 		</dependency>
 	</dependencies>
+
+	<developers>
+		<developer>
+			<id>bk-base</id>
+			<name>bk-base</name>
+			<url>https://bk.tencent.com/</url>
+			<email>contactus_bk@tencent.com</email>
+			<roles>
+				<role>Manager</role>
+			</roles>
+			<timezone>+8</timezone>
+		</developer>
+	</developers>
+
+	<distributionManagement>
+		<snapshotRepository>
+			<!--这里注意与setting.xml配置的severId保持一致-->
+			<id>ossrh</id>
+			<url>https://oss.sonatype.org/content/repositories/snapshots/</url>
+		</snapshotRepository>
+		<repository>
+			<id>ossrh</id>
+			<url>https://oss.sonatype.org/service/local/staging/deploy/maven2/</url>
+		</repository>
+	</distributionManagement>
+
+	<scm>
+		<connection>https://github.com/BKBASE-Plugin/flink.git</connection>
+		<url>https://github.com/BKBASE-Plugin/flink</url>
+	</scm>
 
 	<build>
 		<plugins>
@@ -112,6 +145,51 @@ under the License.
 						<goals>
 							<goal>test-jar</goal>
 						</goals>
+					</execution>
+				</executions>
+			</plugin>
+
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-javadoc-plugin</artifactId>
+				<version>2.10.4</version>
+				<configuration>
+					<aggregate>true</aggregate>
+				</configuration>
+				<executions>
+					<execution>
+						<id>attach-javadocs</id>
+						<phase>package</phase>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+						<configuration>
+							<sourceFileExcludes>
+								<!--忽略动态生成的java文件-->
+								<sourceFileExclude>**/target/**/*.java</sourceFileExclude>
+							</sourceFileExcludes>
+							<!--忽略javadoc生成过程中的警告，比如方法注释缺少@return @param-->
+							<additionalparam>-Xdoclint:none</additionalparam>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-gpg-plugin</artifactId>
+				<version>3.0.1</version>
+				<executions>
+					<execution>
+						<id>sign-artifacts</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>sign</goal>
+						</goals>
+						<configuration>
+							<keyname>${gpg.keyname}</keyname>
+							<passphraseServerId>${gpg.keyname}</passphraseServerId>
+						</configuration>
 					</execution>
 				</executions>
 			</plugin>

@@ -25,6 +25,8 @@ import org.apache.curator.framework.state.ConnectionState;
 import org.apache.curator.framework.state.ConnectionStateListener;
 import org.apache.flink.runtime.jobgraph.JobStatus;
 import org.apache.flink.runtime.jobmanager.HighAvailabilityMode;
+
+import org.apache.zookeeper.ZooKeeper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -159,8 +161,46 @@ public class ZooKeeperCheckpointIDCounter implements CheckpointIDCounter {
 
 		@Override
 		public void stateChanged(CuratorFramework client, ConnectionState newState) {
-			if (newState == ConnectionState.SUSPENDED || newState == ConnectionState.LOST) {
-				lastState = newState;
+			switch (newState) {
+				case SUSPENDED: {
+					Thread t = new Thread("Suspend state waiting handler") {
+						@Override
+						public void run() {
+							long suspendTime = System.currentTimeMillis();
+							long duration = 0L;
+							ZooKeeper zkClient = null;
+							try {
+								zkClient = client.getZookeeperClient().getZooKeeper();
+								while (duration <= client.getZookeeperClient().getConnectionTimeoutMs()) {
+									LOG.info("Connection to Zookeeper is SUSPENDED. Wait it to be back. Already waited {} seconds.", duration / 1000);
+									Thread.sleep(1000L);
+									if (zkClient.getState().isConnected()) {
+										LOG.info("Reconnected.");
+										return;
+									}
+									duration = System.currentTimeMillis() - suspendTime;
+								}
+							} catch (Exception e) {
+								LOG.error("Waiting thread interrupted. We've lost connection to Zookeeper.");
+								lastState = newState;
+								return;
+							}
+							if (zkClient == null || !zkClient.getState().isConnected()) {
+								LOG.error("We've lost connection to Zookeeper.");
+								lastState = newState;
+							}
+						}
+
+					};
+					t.setDaemon(true);
+					t.start();
+					break;
+				}
+
+				case LOST: {
+					lastState = newState;
+					break;
+				}
 			}
 		}
 
@@ -168,4 +208,5 @@ public class ZooKeeperCheckpointIDCounter implements CheckpointIDCounter {
 			return lastState;
 		}
 	}
+
 }

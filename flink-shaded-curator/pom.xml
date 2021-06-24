@@ -77,6 +77,9 @@ under the License.
 								<relocation>
 									<pattern>com.google.common</pattern>
 									<shadedPattern>org.apache.flink.curator.shaded.com.google.common</shadedPattern>
+									<excludes combine.children="append">
+										<exclude>com.google.common.base.Function</exclude>
+									</excludes>
 								</relocation>
 							</relocations>
 						</configuration>

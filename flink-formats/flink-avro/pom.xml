@@ -81,17 +81,17 @@ under the License.
 
 		<!-- TODO This could be dropped if we move the Table Avro IT Case -->
 		<dependency>
-			<groupId>org.apache.flink</groupId>
+			<groupId>com.tencent.bk.base.dataflow</groupId>
 			<artifactId>flink-table_${scala.binary.version}</artifactId>
-			<version>${project.version}</version>
+			<version>${bk.base.version}</version>
 			<scope>test</scope>
 		</dependency>
 
 		<!-- TODO This could be dropped if we move the Table Avro IT Case -->
 		<dependency>
-			<groupId>org.apache.flink</groupId>
+			<groupId>com.tencent.bk.base.dataflow</groupId>
 			<artifactId>flink-table_${scala.binary.version}</artifactId>
-			<version>${project.version}</version>
+			<version>${bk.base.version}</version>
 			<scope>test</scope>
 			<type>test-jar</type>
 		</dependency>

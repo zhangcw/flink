@@ -30,7 +30,7 @@ import org.apache.flink.api.common.typeinfo.BasicTypeInfo
 import org.apache.flink.api.java.typeutils.MultisetTypeInfo
 import org.apache.flink.table.calcite.FlinkTypeFactory
 import org.apache.flink.table.functions.utils.UserDefinedFunctionUtils._
-import org.apache.flink.table.validate.{ValidationFailure, ValidationResult, ValidationSuccess}
+import org.apache.flink.table.validate.{BasicOperatorTable, ValidationFailure, ValidationResult, ValidationSuccess}
 
 abstract sealed class Aggregation extends Expression {
 
@@ -232,6 +232,86 @@ case class Avg(child: Expression) extends Aggregation {
     SqlStdOperatorTable.AVG
   }
 }
+
+/**
+  *  bkdata_last
+  * @param child
+  */
+case class BkDataLast(child: Expression) extends Aggregation {
+  override private[flink] def children: Seq[Expression] = Seq(child)
+  override def toString = s"bkdata_last($child)"
+
+  override private[flink] def toAggCall(name: String, isDistinct: Boolean = false)
+                                       (implicit relBuilder: RelBuilder): AggCall = {
+    relBuilder.aggregateCall(
+      BasicOperatorTable.BKDATA_LAST, false, false, null, name, child.toRexNode)
+  }
+
+  override private[flink] def resultType = child.resultType
+
+//  override private[flink] def validateInput() =
+//    TypeCheckUtils.assertOrderableExpr(child.resultType, "bkdata_last")
+
+  override private[flink] def getSqlAggFunction()(implicit relBuilder: RelBuilder) = {
+    BasicOperatorTable.BKDATA_LAST
+  }
+}
+
+/**
+  *  bkdata_first
+  * @param child
+  */
+case class BkDataFirst(child: Expression) extends Aggregation {
+  override private[flink] def children: Seq[Expression] = Seq(child)
+  override def toString = s"bkdata_first($child)"
+
+  override private[flink] def toAggCall(name: String, isDistinct: Boolean = false)
+                                       (implicit relBuilder: RelBuilder): AggCall = {
+    relBuilder.aggregateCall(
+      BasicOperatorTable.BKDATA_FIRST, false, false, null, name, child.toRexNode)
+  }
+
+  override private[flink] def resultType = child.resultType
+
+//  override private[flink] def validateInput() =
+//    TypeCheckUtils.assertOrderableExpr(child.resultType, "bkdata_first")
+
+  override private[flink] def getSqlAggFunction()(implicit relBuilder: RelBuilder) = {
+    BasicOperatorTable.BKDATA_FIRST
+  }
+}
+
+/**
+  *  20190305 add bkdata_sum
+  *  bkdata_sum
+  * @param child
+  */
+case class BkDataSum(child: Expression) extends Aggregation {
+  override private[flink] def children: Seq[Expression] = Seq(child)
+  override def toString = s"bkdata_sum($child)"
+
+  override private[flink] def toAggCall(name: String, isDistinct: Boolean = false)
+                                       (implicit relBuilder: RelBuilder): AggCall = {
+    relBuilder.aggregateCall(
+      BasicOperatorTable.BKDATA_SUM, isDistinct, false, null, name, child.toRexNode)
+  }
+
+  override private[flink] def resultType = child.resultType match {
+    case BasicTypeInfo.INT_TYPE_INFO | BasicTypeInfo.LONG_TYPE_INFO =>
+      BasicTypeInfo.LONG_TYPE_INFO
+    case BasicTypeInfo.FLOAT_TYPE_INFO | BasicTypeInfo.DOUBLE_TYPE_INFO =>
+      BasicTypeInfo.DOUBLE_TYPE_INFO
+    case _ => child.resultType
+  }
+
+  override private[flink] def validateInput() =
+    TypeCheckUtils.assertNumericExpr(child.resultType, "bkdata_sum")
+
+  override private[flink] def getSqlAggFunction()(implicit relBuilder: RelBuilder) = {
+    BasicOperatorTable.BKDATA_SUM
+  }
+}
+
 
 /**
   * Returns a multiset aggregates.

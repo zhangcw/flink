@@ -24,9 +24,10 @@ import org.apache.calcite.rel.core.AggregateCall
 import org.apache.calcite.rel.{RelNode, RelWriter, SingleRel}
 import org.apache.flink.streaming.api.datastream.{AllWindowedStream, DataStream, KeyedStream, WindowedStream}
 import org.apache.flink.streaming.api.windowing.assigners._
+import org.apache.flink.streaming.api.windowing.time.Time
 import org.apache.flink.streaming.api.windowing.triggers.PurgingTrigger
 import org.apache.flink.streaming.api.windowing.windows.{Window => DataStreamWindow}
-import org.apache.flink.table.api.{StreamQueryConfig, StreamTableEnvironment, TableException}
+import org.apache.flink.table.api.{BkDataGroupWindowAggregateStreamQueryConfig, StreamQueryConfig, StreamTableEnvironment, TableException}
 import org.apache.flink.table.calcite.FlinkRelBuilder.NamedWindowProperty
 import org.apache.flink.table.codegen.AggregationCodeGenerator
 import org.apache.flink.table.expressions.ExpressionUtils._
@@ -43,7 +44,9 @@ import org.apache.flink.table.runtime.types.{CRow, CRowTypeInfo}
 import org.apache.flink.table.runtime.{CRowKeySelector, RowtimeProcessFunction}
 import org.apache.flink.table.typeutils.TypeCheckUtils.isTimeInterval
 import org.apache.flink.table.util.Logging
+import org.apache.flink.table.windowing.assigners.AccumulateEventTimeWindows
 import org.apache.flink.types.Row
+import org.apache.flink.util.OutputTag
 
 class DataStreamGroupWindowAggregate(
     window: LogicalWindow,
@@ -179,8 +182,18 @@ class DataStreamGroupWindowAggregate(
       inputSchema.typeInfo,
       None)
 
+    // 获取扩展queryConfig
+    val bkDataQueryConfig = if (queryConfig
+              .isInstanceOf[BkDataGroupWindowAggregateStreamQueryConfig]) {
+      queryConfig.asInstanceOf[BkDataGroupWindowAggregateStreamQueryConfig]
+    } else {
+      null
+    }
+
     val needMerge = window match {
       case SessionGroupWindow(_, _, _) => true
+      // TODO：doc 滑动转累加窗口,支持窗口合并
+      case SlidingGroupWindow(_, _, _, _) if (isSlidingToAccumulate(queryConfig)) => true
       case _ => false
     }
     // grouped / keyed aggregation
@@ -199,6 +212,25 @@ class DataStreamGroupWindowAggregate(
         createKeyedWindowedStream(queryConfig, window, keyedStream)
           .asInstanceOf[WindowedStream[CRow, Row, DataStreamWindow]]
 
+      /**  TODO: 设置trigger、允许延迟时间，延迟数据侧输出ID
+        * [.trigger(...)]            <-  optional: "trigger" (else default trigger)
+        * [.allowedLateness(...)]    <-  optional: "lateness" (else zero)
+        * [.sideOutputLateData(...)] <-  optional: "output tag" (else no side output for late data)
+        */
+      var outputTag: OutputTag[CRow] = null
+      if (null != bkDataQueryConfig) {
+        if (null != bkDataQueryConfig.getTrigger) {
+          windowedStream.trigger(bkDataQueryConfig.getTrigger)
+        }
+        windowedStream.allowedLateness(Time.milliseconds(bkDataQueryConfig.getAllowedLateness))
+
+        if (null != bkDataQueryConfig.getLateDataOutputTagId) {
+          outputTag = new OutputTag[CRow](bkDataQueryConfig.getLateDataOutputTagId,
+            windowedStream.getInputType)
+          windowedStream.sideOutputLateData(outputTag)
+        }
+      }
+
       val (aggFunction, accumulatorRowType, aggResultRowType) =
         AggregateUtil.createDataStreamAggregateFunction(
           generator,
@@ -210,9 +242,21 @@ class DataStreamGroupWindowAggregate(
           needMerge,
           tableEnv.getConfig)
 
-      windowedStream
+      val retStream = windowedStream
         .aggregate(aggFunction, windowFunction, accumulatorRowType, aggResultRowType, outRowType)
         .name(keyedAggOpName)
+
+      // TODO: 如果设置了延迟数据侧输出，调用延迟数据处理器
+      if (null != bkDataQueryConfig) {
+        if (null != outputTag && null != bkDataQueryConfig.getProcess) {
+          val dataStream = retStream.getSideOutput(outputTag)
+          if ( null != dataStream) {
+            bkDataQueryConfig.getProcess.process(dataStream, inputSchema)
+          }
+        }
+      }
+
+      retStream
     }
     // global / non-keyed aggregation
     else {
@@ -225,6 +269,24 @@ class DataStreamGroupWindowAggregate(
         createNonKeyedWindowedStream(queryConfig, window, timestampedInput)
           .asInstanceOf[AllWindowedStream[CRow, DataStreamWindow]]
 
+      /**  TODO: 设置trigger、允许延迟时间，延迟数据侧输出ID
+        * [.trigger(...)]            <-  optional: "trigger" (else default trigger)
+        * [.allowedLateness(...)]    <-  optional: "lateness" (else zero)
+        * [.sideOutputLateData(...)] <-  optional: "output tag" (else no side output for late data)
+        */
+      var outputTag: OutputTag[CRow] = null
+      if (null != bkDataQueryConfig) {
+        if (null != bkDataQueryConfig.getTrigger) {
+          windowedStream.trigger(bkDataQueryConfig.getTrigger)
+        }
+        windowedStream.allowedLateness(Time.milliseconds(bkDataQueryConfig.getAllowedLateness))
+        if (null != bkDataQueryConfig.getLateDataOutputTagId) {
+          outputTag = new OutputTag[CRow](bkDataQueryConfig.getLateDataOutputTagId,
+            windowedStream.getInputType)
+          windowedStream.sideOutputLateData(outputTag)
+        }
+      }
+
       val (aggFunction, accumulatorRowType, aggResultRowType) =
         AggregateUtil.createDataStreamAggregateFunction(
           generator,
@@ -236,9 +298,22 @@ class DataStreamGroupWindowAggregate(
           needMerge,
           tableEnv.getConfig)
 
-      windowedStream
+      val retStream = windowedStream
         .aggregate(aggFunction, windowFunction, accumulatorRowType, aggResultRowType, outRowType)
         .name(nonKeyedAggOpName)
+
+
+      // TODO: 如果设置了延迟数据侧输出，调用延迟数据处理器
+      if (null != bkDataQueryConfig) {
+        if (null != outputTag && null != bkDataQueryConfig.getProcess) {
+          val dataStream = retStream.getSideOutput(outputTag)
+          if ( null != dataStream) {
+            bkDataQueryConfig.getProcess.process(dataStream, inputSchema)
+          }
+        }
+      }
+
+      retStream
     }
   }
 }
@@ -281,7 +356,26 @@ object DataStreamGroupWindowAggregate {
       .trigger(StateCleaningCountTrigger.of(queryConfig, toLong(slide)));
 
     case SlidingGroupWindow(_, timeField, size, slide)
-        if isRowtimeAttribute(timeField) && isTimeIntervalLiteral(size)=>
+      if isRowtimeAttribute(timeField) && isTimeIntervalLiteral(size)
+        && isSlidingToAccumulate(queryConfig) =>
+      // TODO:doc 累加窗口（在滑动窗口的SQL机制上，配置了累加的queryConfig）
+      stream.window(EventTimeAccumulateWindows.of(
+        toTime(size),
+        toTime(slide),
+        Time.milliseconds(getBkSqlWindowOffset(queryConfig))))
+
+    // 指定累加窗口计算 20191220
+    case SlidingGroupWindow(_, timeField, size, slide)
+      if isRowtimeAttribute(timeField) && isTimeIntervalLiteral(size)
+      && isAccumulate(queryConfig) =>
+      stream.window(AccumulateEventTimeWindows.of(toTime(size),
+        toTime(slide),
+        Time.milliseconds(getBkSqlWindowOffset(queryConfig))))
+
+    case SlidingGroupWindow(_, timeField, size, slide)
+      if isRowtimeAttribute(timeField) && isTimeIntervalLiteral(size)
+        && !isSlidingToAccumulate(queryConfig)
+        && !isAccumulate(queryConfig) =>
       stream.window(SlidingEventTimeWindows.of(toTime(size), toTime(slide)))
 
     case SlidingGroupWindow(_, _, size, slide) =>
@@ -335,7 +429,25 @@ object DataStreamGroupWindowAggregate {
       .trigger(StateCleaningCountTrigger.of(queryConfig, toLong(slide)));
 
     case SlidingGroupWindow(_, timeField, size, slide)
-        if isRowtimeAttribute(timeField) && isTimeIntervalLiteral(size)=>
+      if isRowtimeAttribute(timeField) && isTimeIntervalLiteral(size)
+        && isSlidingToAccumulate(queryConfig) =>
+      // TODO:【无key窗口部分】累加窗口（在滑动窗口的SQL机制上，配置了累加的queryConfig）
+      stream.windowAll(EventTimeAccumulateWindows.of(
+        toTime(size),
+        toTime(slide),
+        Time.milliseconds(getBkSqlWindowOffset(queryConfig))))
+
+    case SlidingGroupWindow(_, timeField, size, slide)
+      if isRowtimeAttribute(timeField) && isTimeIntervalLiteral(size)
+        && isAccumulate(queryConfig) =>
+      stream.windowAll(AccumulateEventTimeWindows.of(toTime(size),
+        toTime(slide),
+        Time.milliseconds(getBkSqlWindowOffset(queryConfig))))
+
+    case SlidingGroupWindow(_, timeField, size, slide)
+      if isRowtimeAttribute(timeField) && isTimeIntervalLiteral(size)
+        && !isSlidingToAccumulate(queryConfig)
+        && !isAccumulate(queryConfig) =>
       stream.windowAll(SlidingEventTimeWindows.of(toTime(size), toTime(slide)))
 
     case SlidingGroupWindow(_, _, size, slide) =>
@@ -352,6 +464,49 @@ object DataStreamGroupWindowAggregate {
     case SessionGroupWindow(_, timeField, gap)
         if isRowtimeAttribute(timeField) && isTimeIntervalLiteral(gap) =>
       stream.windowAll(EventTimeSessionWindows.withGap(toTime(gap)))
+  }
+
+  /**
+    * 判断是否累加计算
+    * @param queryConfig
+    * @return
+    */
+  private def isSlidingToAccumulate(queryConfig: StreamQueryConfig): Boolean = {
+    val result = if (queryConfig.isInstanceOf[BkDataGroupWindowAggregateStreamQueryConfig]) {
+      queryConfig.asInstanceOf[BkDataGroupWindowAggregateStreamQueryConfig].isSlidingToAccumulate
+    } else {
+      false
+    }
+    result
+  }
+
+  /**
+   * 判断是否为累加窗口 20191220
+   *
+   * @param queryConfig
+   * @return
+   */
+  private def isAccumulate(queryConfig: StreamQueryConfig): Boolean = {
+    val result = if (queryConfig.isInstanceOf[BkDataGroupWindowAggregateStreamQueryConfig]) {
+      queryConfig.asInstanceOf[BkDataGroupWindowAggregateStreamQueryConfig].isAccumulateWindow
+    } else {
+      false
+    }
+    result
+  }
+
+  /**
+    * 获取时间偏移
+    * @param queryConfig
+    * @return
+    */
+  private def getBkSqlWindowOffset(queryConfig: StreamQueryConfig): Long = {
+    val result = if (queryConfig.isInstanceOf[BkDataGroupWindowAggregateStreamQueryConfig]) {
+      queryConfig.asInstanceOf[BkDataGroupWindowAggregateStreamQueryConfig].getBkSqlWindowOffset
+    } else {
+      0L
+    }
+    result
   }
 
 }

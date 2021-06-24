@@ -175,4 +175,38 @@ public class JavaSqlITCase extends TableProgramsCollectionTestBase {
 		String expected = "bar\n" + "spam\n";
 		compareResultAsText(results, expected);
 	}
+
+	@Test
+	public void testImplicitConvertAtEqual() throws Exception {
+		ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
+		BatchTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env, config());
+
+		DataSet<Tuple3<Integer, Long, String>> ds = CollectionDataSets.getSmall3TupleDataSet(env);
+		tableEnv.registerDataSet("T", ds, "a, b, c");
+
+		String sqlQuery = "SELECT * FROM T WHERE a = '1'";
+		Table result = tableEnv.sqlQuery(sqlQuery);
+
+		DataSet<Row> resultSet = tableEnv.toDataSet(result, Row.class);
+		List<Row> results = resultSet.collect();
+		String expected = "1,1,Hi\n";
+		compareResultAsText(results, expected);
+	}
+
+	@Test
+	public void testImplicitConvertAtNotEqual() throws Exception {
+		ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
+		BatchTableEnvironment tableEnv = TableEnvironment.getTableEnvironment(env, config());
+
+		DataSet<Tuple3<Integer, Long, String>> ds = CollectionDataSets.getSmall3TupleDataSet(env);
+		tableEnv.registerDataSet("T", ds, "a, b, c");
+
+		String sqlQuery = "SELECT * FROM T WHERE a <> '1'";
+		Table result = tableEnv.sqlQuery(sqlQuery);
+
+		DataSet<Row> resultSet = tableEnv.toDataSet(result, Row.class);
+		List<Row> results = resultSet.collect();
+		String expected = "2,2,Hello\n" + "3,2,Hello world\n";
+		compareResultAsText(results, expected);
+	}
 }

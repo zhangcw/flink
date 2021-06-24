@@ -381,6 +381,36 @@ class SqlITCase extends StreamingWithStateTestBase {
     assertEquals(expected.sorted, StreamITCase.testResults.sorted)
   }
 
+  /** test select case when for convert ragged union types to varying **/
+  @Test
+  def tesCaseWhenWithVaryingUnionTypes(): Unit = {
+
+    val env = StreamExecutionEnvironment.getExecutionEnvironment
+    val tEnv = TableEnvironment.getTableEnvironment(env)
+    StreamITCase.clear
+
+    val sqlQuery =
+      """
+        |SELECT
+        | case
+        |   when b = '1' then 'xxx'
+        |   when b = 'two' then 'xx'
+        |   else 'x'
+        | end as case_field
+        |FROM MyTable
+      """.stripMargin
+
+    val t = StreamTestData.getSmallNestedTupleDataStream(env).toTable(tEnv).as('a, 'b)
+    tEnv.registerTable("MyTable", t)
+
+    val result = tEnv.sqlQuery(sqlQuery).toAppendStream[Row]
+    result.addSink(new StreamITCase.StringSink[Row])
+    env.execute()
+
+    val expected = List("x", "xx", "x")
+    assertEquals(expected.sorted, StreamITCase.testResults.sorted)
+  }
+
   /** test selection **/
   @Test
   def testSelectExpressionFromTable(): Unit = {

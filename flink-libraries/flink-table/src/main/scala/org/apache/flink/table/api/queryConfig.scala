@@ -21,6 +21,10 @@ package org.apache.flink.table.api
 import _root_.java.io.Serializable
 
 import org.apache.flink.api.common.time.Time
+import org.apache.flink.streaming.api.datastream.DataStream
+import org.apache.flink.streaming.api.windowing.triggers.Trigger
+import org.apache.flink.table.plan.schema.RowSchema
+import org.apache.flink.table.runtime.types.CRow
 
 class QueryConfig private[table] extends Serializable {}
 
@@ -89,4 +93,102 @@ class StreamQueryConfig private[table] extends QueryConfig {
   def getMaxIdleStateRetentionTime: Long = {
     maxIdleStateRetentionTime
   }
+}
+
+/**
+  * 扩展的SQL查询配置
+  * 1、支持自定义出发器。
+  * 2、支持设置允许数据延迟事件（延迟时间内的数据可以进行计算，但会有多条记录）
+  * 3、支持配置延迟数据侧输出
+  * 4、支持设置滑动窗口为累加窗口
+  */
+class BkDataGroupWindowAggregateStreamQueryConfig extends StreamQueryConfig {
+  import org.apache.flink.streaming.api.windowing.windows.{Window => DataStreamWindow}
+
+  private var trigger: Trigger[_ >: CRow, _ >: DataStreamWindow] = null
+  private var allowedLateness = 0L
+  private var lateDataOutputTagId: String = null
+  private var process: BkDataSideOutputProcess = null
+
+  /**
+    * 滑动转累加窗口偏移（按天的时候需要根据UTC时间设置相应的偏移）
+    */
+  private var bkSqlWindowOffset: Long = 0L
+
+  /**
+    * 是否滑动转累加窗口
+    */
+  private var slidingToAccumulate: Boolean = false
+
+  /**
+   * 是否累加窗口 20191220
+   */
+  private var isAccumulate: Boolean = false
+
+  /**
+    * 是否累加窗口
+    * @return
+    */
+  def isSlidingToAccumulate: Boolean = slidingToAccumulate
+
+  /**
+   * 是否累加窗口 20191220
+   * @return
+   */
+  def isAccumulateWindow: Boolean = isAccumulate
+
+  def getBkSqlWindowOffset: Long = {
+    bkSqlWindowOffset
+  }
+
+  def setBkSqlWindowOffset(bkSqlWindowOffset: Long): Unit = {
+    this.bkSqlWindowOffset = bkSqlWindowOffset
+  }
+
+  def setSlidingToAccumulate(slidingToAccumulate: Boolean): Unit = {
+    this.slidingToAccumulate = slidingToAccumulate
+  }
+
+  /**
+   * 设置累加窗口 20191220
+   * @param isAccumulate default false
+   */
+  def setAccumulate(isAccumulate: Boolean): Unit = {
+    this.isAccumulate = isAccumulate
+  }
+
+  def getTrigger: Trigger[_ >: CRow, _ >: DataStreamWindow]= trigger
+  def getAllowedLateness: Long = allowedLateness
+  def getLateDataOutputTagId: String = lateDataOutputTagId
+  def getProcess: BkDataSideOutputProcess = process
+
+  def trigger(trigger: Trigger[_ >: CRow, _ >: DataStreamWindow] ):
+          BkDataGroupWindowAggregateStreamQueryConfig ={
+    this.trigger = trigger
+    this
+  }
+  def allowedLateness(allowedLateness: Long):
+          BkDataGroupWindowAggregateStreamQueryConfig ={
+    this.allowedLateness = allowedLateness
+    this
+  }
+  def sideOutputLateData(lateDataOutputTagId: String):
+          BkDataGroupWindowAggregateStreamQueryConfig ={
+    this.lateDataOutputTagId = lateDataOutputTagId
+    this
+  }
+
+  def setSideOutputProcess(process: BkDataSideOutputProcess):
+          BkDataGroupWindowAggregateStreamQueryConfig ={
+    this.process = process
+    this
+  }
+
+}
+
+/**
+  * 延迟数据侧输出处理器
+  */
+trait BkDataSideOutputProcess extends Serializable {
+  def process(dataStream: DataStream[CRow], inputSchema: RowSchema): Unit
 }

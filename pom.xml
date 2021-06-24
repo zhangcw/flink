@@ -136,6 +136,7 @@ under the License.
 		-->
 		<minikdc.version>2.7.2</minikdc.version>
 		<generated.docs.dir>./docs/_includes/generated</generated.docs.dir>
+		<bk.base.version>v1.7.2-bkbase.1</bk.base.version>
 	</properties>
 
 	<dependencies>

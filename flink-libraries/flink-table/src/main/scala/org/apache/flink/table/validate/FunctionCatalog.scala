@@ -19,7 +19,7 @@
 package org.apache.flink.table.validate
 
 import org.apache.calcite.sql.`type`.{OperandTypes, ReturnTypes, SqlTypeTransforms}
-import org.apache.calcite.sql.fun.SqlStdOperatorTable
+import org.apache.calcite.sql.fun.{SqlBkDataFirstAggFunction, SqlBkDataLastAggFunction, SqlBkDataSumAggFunction, SqlStdOperatorTable}
 import org.apache.calcite.sql.util.{ChainedSqlOperatorTable, ListSqlOperatorTable, ReflectiveSqlOperatorTable}
 import org.apache.calcite.sql._
 import org.apache.flink.table.api._
@@ -183,6 +183,12 @@ object FunctionCatalog {
     "varPop" -> classOf[VarPop],
     "varSamp" -> classOf[VarSamp],
     "collect" -> classOf[Collect],
+    // add bkdata_last operator class
+    "bkdata_last" -> classOf[BkDataLast],
+    // add bkdata_first operator class
+    "bkdata_first" -> classOf[BkDataFirst],
+    // 20190305 add bkdata_first operator class
+    "bkdata_sum" -> classOf[BkDataSum],
 
     // string functions
     "charLength" -> classOf[CharLength],
@@ -374,6 +380,13 @@ class BasicOperatorTable extends ReflectiveSqlOperatorTable {
     SqlStdOperatorTable.STDDEV_SAMP,
     SqlStdOperatorTable.VAR_POP,
     SqlStdOperatorTable.VAR_SAMP,
+    // add bkdata_last operator
+    BasicOperatorTable.BKDATA_LAST,
+    // add bkdata_first operator
+    BasicOperatorTable.BKDATA_FIRST,
+    // 20190305 add bkdata_sum operator
+    BasicOperatorTable.BKDATA_SUM,
+
     // ARRAY OPERATORS
     SqlStdOperatorTable.ARRAY_VALUE_CONSTRUCTOR,
     SqlStdOperatorTable.ELEMENT,
@@ -506,6 +519,14 @@ class BasicOperatorTable extends ReflectiveSqlOperatorTable {
 
 object BasicOperatorTable {
 
+  // add bkdata_last operator
+  val BKDATA_LAST: SqlAggFunction =
+    new SqlBkDataLastAggFunction("BKDATA_LAST", SqlKind.OTHER_FUNCTION)
+  // add bkdata_first operator
+  val BKDATA_FIRST: SqlAggFunction =
+    new SqlBkDataFirstAggFunction("BKDATA_FIRST", SqlKind.OTHER_FUNCTION)
+  // 20190305 bkdata_sum operator
+  val BKDATA_SUM: SqlAggFunction = new SqlBkDataSumAggFunction();
   /**
     * We need custom group auxiliary functions in order to support nested windows.
     */

@@ -61,9 +61,9 @@ under the License.
 			<scope>provided</scope>
 		</dependency>
 		<dependency>
-			<groupId>org.apache.flink</groupId>
+			<groupId>com.tencent.bk.base.dataflow</groupId>
 			<artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
-			<version>${flink.version}</version>
+			<version>${bk.base.version}</version>
 			<scope>provided</scope>
 		</dependency>
 
@@ -220,9 +220,9 @@ under the License.
 					<scope>compile</scope>
 				</dependency>
 				<dependency>
-					<groupId>org.apache.flink</groupId>
+					<groupId>com.tencent.bk.base.dataflow</groupId>
 					<artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
-					<version>${flink.version}</version>
+					<version>${bk.base.version}</version>
 					<scope>compile</scope>
 				</dependency>
 			</dependencies>

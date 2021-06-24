@@ -61,9 +61,9 @@
 
 		<!-- Table API-->
 		<file>
-			<source>../flink-libraries/flink-table/target/flink-table_${scala.binary.version}-${project.version}.jar</source>
+			<source>../flink-libraries/flink-table/target/flink-table_${scala.binary.version}-${bk.base.version}.jar</source>
 			<outputDirectory>opt/</outputDirectory>
-			<destName>flink-table_${scala.binary.version}-${project.version}.jar</destName>
+			<destName>flink-table_${scala.binary.version}-${bk.base.version}.jar</destName>
 			<fileMode>0644</fileMode>
 		</file>
 

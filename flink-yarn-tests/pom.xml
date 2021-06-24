@@ -77,9 +77,9 @@ under the License.
 
 		<!-- Needed for the streaming wordcount example -->
 		<dependency>
-			<groupId>org.apache.flink</groupId>
+			<groupId>com.tencent.bk.base.dataflow</groupId>
 			<artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
-			<version>${project.version}</version>
+			<version>${bk.base.version}</version>
 			<scope>test</scope>
 		</dependency>
 

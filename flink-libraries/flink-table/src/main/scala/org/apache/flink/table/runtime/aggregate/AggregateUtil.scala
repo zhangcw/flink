@@ -1435,6 +1435,90 @@ object AggregateUtil {
               }
             }
 
+            // add bkdata_last function type match
+          case a: SqlBkDataLastAggFunction if a.kind == SqlKind.OTHER_FUNCTION =>
+            aggregates(index) = sqlTypeName match {
+              case TINYINT =>
+                new ByteUdfBkDataLastAggFunction
+              case SMALLINT =>
+                new ShortUdfBkDataLastAggFunction
+              case INTEGER =>
+                new IntUdfBkDataLastAggFunction
+              case BIGINT =>
+                new LongUdfBkDataLastAggFunction
+              case FLOAT =>
+                new FloatUdfBkDataLastAggFunction
+              case DOUBLE =>
+                new DoubleUdfBkDataLastAggFunction
+              case DECIMAL =>
+                new DecimalUdfBkDataLastAggFunction
+              case BOOLEAN =>
+                new BooleanUdfBkDataLastAggFunction
+              case VARCHAR | CHAR =>
+                new StringUdfBkDataLastAggFunction
+              case TIMESTAMP =>
+                new TimestampUdfBkDataLastAggFunction
+              case DATE =>
+                new DateUdfBkDataLastAggFunction
+              case TIME =>
+                new TimeUdfBkDataLastAggFunction
+              case sqlType: SqlTypeName =>
+                throw new TableException(s"bkdata_last aggregate does no support type: '$sqlType'")
+            }
+
+          // add bkdata_first function type match
+          case a: SqlBkDataFirstAggFunction if a.kind == SqlKind.OTHER_FUNCTION =>
+            aggregates(index) = sqlTypeName match {
+              case TINYINT =>
+                new ByteUdfBkDataFirstAggFunction
+              case SMALLINT =>
+                new ShortUdfBkDataFirstAggFunction
+              case INTEGER =>
+                new IntUdfBkDataFirstAggFunction
+              case BIGINT =>
+                new LongUdfBkDataFirstAggFunction
+              case FLOAT =>
+                new FloatUdfBkDataFirstAggFunction
+              case DOUBLE =>
+                new DoubleUdfBkDataFirstAggFunction
+              case DECIMAL =>
+                new DecimalUdfBkDataFirstAggFunction
+              case BOOLEAN =>
+                new BooleanUdfBkDataFirstAggFunction
+              case VARCHAR | CHAR =>
+                new StringUdfBkDataFirstAggFunction
+              case TIMESTAMP =>
+                new TimestampUdfBkDataFirstAggFunction
+              case DATE =>
+                new DateUdfBkDataFirstAggFunction
+              case TIME =>
+                new TimeUdfBkDataFirstAggFunction
+              case sqlType: SqlTypeName =>
+                throw new TableException(s"bkdata_first aggregate does no support type: '$sqlType'")
+            }
+
+            // 20190305 add bkdata_sum
+          // add bkdata_sum function type match
+          case a: SqlBkDataSumAggFunction if a.kind == SqlKind.OTHER_FUNCTION =>
+            aggregates(index) = sqlTypeName match {
+              case TINYINT =>
+                new LongBkDataSumAggFunction
+              case SMALLINT =>
+                new LongBkDataSumAggFunction
+              case INTEGER =>
+                new LongBkDataSumAggFunction
+              case BIGINT =>
+                new LongBkDataSumAggFunction
+              case FLOAT =>
+                new DoubleBkDataSumAggFunction
+              case DOUBLE =>
+                new DoubleBkDataSumAggFunction
+              case DECIMAL =>
+                new DoubleBkDataSumAggFunction
+              case sqlType: SqlTypeName =>
+                throw new TableException(s"bkdata_sum aggregate does no support type: '$sqlType'")
+            }
+
           case collect: SqlAggFunction if collect.getKind == SqlKind.COLLECT =>
             aggregates(index) = new CollectAggFunction(FlinkTypeFactory.toTypeInfo(relDataType))
             accTypes(index) = aggregates(index).getAccumulatorType

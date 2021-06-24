@@ -39,9 +39,9 @@ under the License.
 		<!-- core dependencies -->
 
 		<dependency>
-			<groupId>org.apache.flink</groupId>
+			<groupId>com.tencent.bk.base.dataflow</groupId>
 			<artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
-			<version>${project.version}</version>
+			<version>${bk.base.version}</version>
 		</dependency>
 
 		<dependency>
@@ -77,9 +77,9 @@ under the License.
 		</dependency>
 
 		<dependency>
-			<groupId>org.apache.flink</groupId>
+			<groupId>com.tencent.bk.base.dataflow</groupId>
 			<artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
-			<version>${project.version}</version>
+			<version>${bk.base.version}</version>
 			<scope>test</scope>
 			<type>test-jar</type>
 		</dependency>

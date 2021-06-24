@@ -38,9 +38,9 @@ under the License.
 			<version>${project.version}</version>
 		</dependency>
 		<dependency>
-			<groupId>org.apache.flink</groupId>
+			<groupId>com.tencent.bk.base.dataflow</groupId>
 			<artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
-			<version>${project.version}</version>
+			<version>${bk.base.version}</version>
 			<scope>provided</scope>
 		</dependency>
 		<dependency>

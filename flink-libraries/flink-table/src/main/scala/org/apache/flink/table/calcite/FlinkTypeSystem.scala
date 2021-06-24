@@ -48,4 +48,8 @@ class FlinkTypeSystem extends RelDataTypeSystemImpl {
       super.getDefaultPrecision(typeName)
   }
 
+  // The least restrictive type of a number of CHAR/BINARY types of different lengths will be
+  // a VARCHAR/VARBINARY type
+  override def shouldConvertRaggedUnionTypesToVarying(): Boolean = true
+
 }

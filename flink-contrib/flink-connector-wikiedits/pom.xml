@@ -36,9 +36,9 @@ under the License.
 
 	<dependencies>
 		<dependency>
-			<groupId>org.apache.flink</groupId>
+			<groupId>com.tencent.bk.base.dataflow</groupId>
 			<artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
-			<version>${project.version}</version>
+			<version>${bk.base.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.schwering</groupId>

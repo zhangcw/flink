@@ -224,6 +224,20 @@ object ScalarOperators {
     else if (isComparable(left.resultType) && left.resultType == right.resultType) {
       generateComparison("==", nullCheck, left, right)
     }
+    // string type and other type
+    else if (isString(left.resultType) &&
+      left.resultType.getTypeClass != right.resultType.getTypeClass) {
+      generateOperatorIfNotNull(nullCheck, BOOLEAN_TYPE_INFO, left, right) {
+        (leftTerm, rightTerm) => s"$leftTerm.equals(String.valueOf($rightTerm))"
+      }
+    }
+    // other type and string type
+    else if (isString(right.resultType) &&
+      left.resultType.getTypeClass != right.resultType.getTypeClass) {
+      generateOperatorIfNotNull(nullCheck, BOOLEAN_TYPE_INFO, left, right) {
+        (leftTerm, rightTerm) => s"$rightTerm.equals(String.valueOf($leftTerm))"
+      }
+    }
     // non comparable types
     else {
       generateOperatorIfNotNull(nullCheck, BOOLEAN_TYPE_INFO, left, right) {
@@ -271,6 +285,20 @@ object ScalarOperators {
     // comparable types
     else if (isComparable(left.resultType) && left.resultType == right.resultType) {
       generateComparison("!=", nullCheck, left, right)
+    }
+    // string type and other type
+    else if (isString(left.resultType) &&
+      left.resultType.getTypeClass != right.resultType.getTypeClass) {
+      generateOperatorIfNotNull(nullCheck, BOOLEAN_TYPE_INFO, left, right) {
+        (leftTerm, rightTerm) => s"!($leftTerm.equals(String.valueOf($rightTerm)))"
+      }
+    }
+    // other type and string type
+    else if (isString(right.resultType) &&
+      left.resultType.getTypeClass != right.resultType.getTypeClass) {
+      generateOperatorIfNotNull(nullCheck, BOOLEAN_TYPE_INFO, left, right) {
+        (leftTerm, rightTerm) => s"!($rightTerm.equals(String.valueOf($leftTerm)))"
+      }
     }
     // non-comparable types
     else {

@@ -61,10 +61,12 @@ import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
 import org.apache.flink.streaming.api.operators.TimestampedCollector;
 import org.apache.flink.streaming.api.operators.Triggerable;
 import org.apache.flink.streaming.api.windowing.assigners.BaseAlignedWindowAssigner;
+import org.apache.flink.streaming.api.windowing.assigners.EventTimeAccumulateWindows;
 import org.apache.flink.streaming.api.windowing.assigners.MergingWindowAssigner;
 import org.apache.flink.streaming.api.windowing.assigners.WindowAssigner;
 import org.apache.flink.streaming.api.windowing.triggers.Trigger;
 import org.apache.flink.streaming.api.windowing.triggers.TriggerResult;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.api.windowing.windows.Window;
 import org.apache.flink.streaming.runtime.operators.windowing.functions.InternalWindowFunction;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
@@ -72,6 +74,7 @@ import org.apache.flink.util.OutputTag;
 
 import java.io.Serializable;
 import java.util.Collection;
+import java.util.Collections;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -300,80 +303,113 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 
 		final K key = this.<K>getKeyedStateBackend().getCurrentKey();
 
-		if (windowAssigner instanceof MergingWindowAssigner) {
+		if (windowAssigner instanceof EventTimeAccumulateWindows) {
+			// TODO:doc 累加窗口计算逻辑
+			isSkippedElement = processEventTimeAccumulateWindowElement(element, elementWindows, isSkippedElement, key);
+		} else if (windowAssigner instanceof MergingWindowAssigner) {
 			MergingWindowSet<W> mergingWindows = getMergingWindowSet();
 
 			for (W window: elementWindows) {
 
-				// adding the new window might result in a merge, in that case the actualWindow
-				// is the merged window and we work with that. If we don't merge then
-				// actualWindow == window
-				W actualWindow = mergingWindows.addWindow(window, new MergingWindowSet.MergeFunction<W>() {
-					@Override
-					public void merge(W mergeResult,
-							Collection<W> mergedWindows, W stateWindowResult,
-							Collection<W> mergedStateWindows) throws Exception {
+				W actualWindow;
+				// session窗口，乱序数据直接输出
+				if (isAllowedLateness(window)) {
+					window = (W) new TimeWindow(((TimeWindow) window).getStart(), ((TimeWindow) window).getStart());
+					actualWindow = window;
+				} else {
+					// adding the new window might result in a merge, in that case the actualWindow
+					// is the merged window and we work with that. If we don't merge then
+					// actualWindow == window
+					actualWindow = mergingWindows.addWindow(window, new MergingWindowSet.MergeFunction<W>() {
+						@Override
+						public void merge(W mergeResult, Collection<W> mergedWindows, W stateWindowResult, Collection<W> mergedStateWindows) throws Exception {
 
-						if ((windowAssigner.isEventTime() && mergeResult.maxTimestamp() + allowedLateness <= internalTimerService.currentWatermark())) {
-							throw new UnsupportedOperationException("The end timestamp of an " +
+							if ((windowAssigner.isEventTime() && mergeResult.maxTimestamp() + allowedLateness <= internalTimerService.currentWatermark())) {
+								throw new UnsupportedOperationException("The end timestamp of an " +
 									"event-time window cannot become earlier than the current watermark " +
 									"by merging. Current watermark: " + internalTimerService.currentWatermark() +
 									" window: " + mergeResult);
-						} else if (!windowAssigner.isEventTime() && mergeResult.maxTimestamp() <= internalTimerService.currentProcessingTime()) {
-							throw new UnsupportedOperationException("The end timestamp of a " +
+							} else if (!windowAssigner.isEventTime() && mergeResult.maxTimestamp() <= internalTimerService.currentProcessingTime()) {
+								throw new UnsupportedOperationException("The end timestamp of a " +
 									"processing-time window cannot become earlier than the current processing time " +
 									"by merging. Current processing time: " + internalTimerService.currentProcessingTime() +
 									" window: " + mergeResult);
+							}
+
+							triggerContext.key = key;
+							triggerContext.window = mergeResult;
+
+							triggerContext.onMerge(mergedWindows);
+
+							for (W m: mergedWindows) {
+								triggerContext.window = m;
+								triggerContext.clear();
+								deleteCleanupTimer(m);
+							}
+
+							// merge the merged state windows into the newly resulting state window
+							windowMergingState.mergeNamespaces(stateWindowResult, mergedStateWindows);
 						}
-
-						triggerContext.key = key;
-						triggerContext.window = mergeResult;
-
-						triggerContext.onMerge(mergedWindows);
-
-						for (W m: mergedWindows) {
-							triggerContext.window = m;
-							triggerContext.clear();
-							deleteCleanupTimer(m);
-						}
-
-						// merge the merged state windows into the newly resulting state window
-						windowMergingState.mergeNamespaces(stateWindowResult, mergedStateWindows);
-					}
-				});
+					});
+				}
 
 				// drop if the window is already late
-				if (isWindowLate(actualWindow)) {
+				// 当开启延迟数据计算时，不将延迟数据丢弃
+				if (isWindowLate(actualWindow) && !isAllowedLateness(actualWindow)) {
 					mergingWindows.retireWindow(actualWindow);
 					continue;
 				}
+
 				isSkippedElement = false;
+				// emit延迟数据的session窗口
+				if (isAllowedLateness(window)) {
+					windowState.setCurrentNamespace(window);
+					windowState.add(element.getValue());
 
-				W stateWindow = mergingWindows.getStateWindow(actualWindow);
-				if (stateWindow == null) {
-					throw new IllegalStateException("Window " + window + " is not in in-flight window set.");
-				}
+					triggerContext.key = key;
+					triggerContext.window = window;
 
-				windowState.setCurrentNamespace(stateWindow);
-				windowState.add(element.getValue());
+					TriggerResult triggerResult = triggerContext.onElement(element);
 
-				triggerContext.key = key;
-				triggerContext.window = actualWindow;
-
-				TriggerResult triggerResult = triggerContext.onElement(element);
-
-				if (triggerResult.isFire()) {
-					ACC contents = windowState.get();
-					if (contents == null) {
-						continue;
+					if (triggerResult.isFire()) {
+						ACC contents = windowState.get();
+						if (contents == null) {
+							continue;
+						}
+						emitWindowContents(window, contents);
 					}
-					emitWindowContents(actualWindow, contents);
-				}
 
-				if (triggerResult.isPurge()) {
-					windowState.clear();
+					if (triggerResult.isPurge()) {
+						windowState.clear();
+					}
+					registerCleanupTimer(window);
+				} else {
+					W stateWindow = mergingWindows.getStateWindow(actualWindow);
+					if (stateWindow == null) {
+						throw new IllegalStateException("Window " + window + " is not in in-flight window set.");
+					}
+
+					windowState.setCurrentNamespace(stateWindow);
+					windowState.add(element.getValue());
+
+					triggerContext.key = key;
+					triggerContext.window = actualWindow;
+
+					TriggerResult triggerResult = triggerContext.onElement(element);
+
+					if (triggerResult.isFire()) {
+						ACC contents = windowState.get();
+						if (contents == null) {
+							continue;
+						}
+						emitWindowContents(actualWindow, contents);
+					}
+
+					if (triggerResult.isPurge()) {
+						windowState.clear();
+					}
+					registerCleanupTimer(actualWindow);
 				}
-				registerCleanupTimer(actualWindow);
 			}
 
 			// need to make sure to update the merging state in state
@@ -423,6 +459,47 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 		}
 	}
 
+	private boolean processEventTimeAccumulateWindowElement(StreamRecord<IN> element, Collection<W> elementWindows, boolean isSkippedElement, K key) throws Exception {
+		for (W window : elementWindows) {
+			// drop if the window is already late
+			if (isWindowLate(window)) {
+				continue;
+			}
+			isSkippedElement = false;
+
+			windowState.setCurrentNamespace(window);
+			windowState.add(element.getValue());
+
+			triggerContext.key = key;
+			triggerContext.window = window;
+
+			TriggerResult triggerResult = triggerContext.onElement(element);
+
+			// TODO:doc 暂时不支持基于记录级别的onElement的触发，onElement只支持CONTINUE（因为不想窗口被触发多次）
+//			if (triggerResult.isFire()) {
+//				ACC contents = windowState.get();
+//				if (contents == null) {
+//					continue;
+//				}
+//				emitWindowContents(window, contents);
+//			}
+//
+//			if (triggerResult.isPurge()) {
+//				windowState.clear();
+//			}
+			/**
+			 * 【事件时间场景】
+			 *  窗口在TimeService注册两次时间说明：
+			 * 1. triggerContext.onElement(element)：记录运算之后，调用出发器的onElement方法注册，窗口结束时间到TimeService。
+			 * 2. registerCleanupTimer(window)：注册窗口清理时间到TimeService。因为可能设置了allowedLateness，则数据到底时间满足（当前水位< 窗口结束时间+allowedLateness）
+			 *    的记录，可以继续参与到窗口的计算中，默认allowedLateness为0。
+			 * 》》可能存在的问题: 如果设置了allowedLateness，一个窗口可能会被触发多次。
+			 */
+			registerCleanupTimer(window);
+		}
+		return isSkippedElement;
+	}
+
 	@Override
 	public void onEventTime(InternalTimer<K, W> timer) throws Exception {
 		triggerContext.key = timer.getKey();
@@ -430,7 +507,11 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 
 		MergingWindowSet<W> mergingWindows;
 
-		if (windowAssigner instanceof MergingWindowAssigner) {
+		if ((windowAssigner instanceof EventTimeAccumulateWindows)) {
+			// TODO:doc 添加累加窗口
+			windowState.setCurrentNamespace(triggerContext.window);
+			mergingWindows = null;
+		} else if (windowAssigner instanceof MergingWindowAssigner) {
 			mergingWindows = getMergingWindowSet();
 			W stateWindow = mergingWindows.getStateWindow(triggerContext.window);
 			if (stateWindow == null) {
@@ -451,7 +532,21 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 		if (triggerResult.isFire()) {
 			ACC contents = windowState.get();
 			if (contents != null) {
-				emitWindowContents(triggerContext.window, contents);
+				if (windowAssigner instanceof EventTimeAccumulateWindows) {
+					//TODO:doc 实现窗口合并的逻辑
+					if (onEventTimeAccumulateMerge(timer)) {
+						return;
+					}
+				} else {
+					emitWindowContents(triggerContext.window, contents);
+				}
+			} else {
+				if (windowAssigner instanceof EventTimeAccumulateWindows) {
+					// 可以存着注册的空的子窗(子窗触发时，会注册下一个子窗，但不能保证下一个子窗有数据)
+					if (onEventTimeAccumulateMerge(timer)) {
+						return;
+					}
+				}
 			}
 		}
 
@@ -513,6 +608,54 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 			// need to make sure to update the merging state in state
 			mergingWindows.persist();
 		}
+	}
+
+	private boolean onEventTimeAccumulateMerge(InternalTimer<K, W> timer) throws Exception {
+		ACC contents;
+		EventTimeAccumulateWindows eventTimeAccWindows = (EventTimeAccumulateWindows) windowAssigner;
+		// 子窗口
+		W childWindow = timer.getNamespace();
+		// 获取累加窗口
+		TimeWindow accWindow = eventTimeAccWindows.getAccWindow(timer.getNamespace().maxTimestamp());
+		if (accWindow.equals(timer.getNamespace())) {
+			// 累加窗口不参与触发
+			return true;
+		}
+
+		triggerContext.key = timer.getKey();
+
+		triggerContext.window = (W) accWindow;
+		Collection<W> mergedStateWindows = Collections.singletonList(timer.getNamespace());
+		// 这里会注册累加窗口accWindow的触发时间（如果当前水位<窗口结束时间）
+		triggerContext.onMerge(mergedStateWindows);
+
+		// 清理child窗口的触发器
+		triggerContext.window = timer.getNamespace();
+		triggerContext.clear();
+		deleteCleanupTimer(timer.getNamespace());
+
+		// 合并child窗口的值到累加窗口
+		windowMergingState.mergeNamespaces((W) accWindow, mergedStateWindows);
+
+		// 清理子窗口状态
+		windowState.clear();
+		processContext.window = timer.getNamespace();
+		processContext.clear();
+
+		windowState.setCurrentNamespace((W) accWindow);
+
+		triggerContext.window = (W) accWindow;
+		contents = windowMergingState.get();
+		// System.out.println(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(timer.getTimestamp())));
+		emitWindowContents((W) childWindow, contents);
+		// 注册下一个子窗口，处理数据稀疏时输出不完整
+		TimeWindow nextChildWindow = eventTimeAccWindows.getNextWindow(childWindow.maxTimestamp());
+		if (nextChildWindow.getEnd() <= accWindow.getEnd()){
+			triggerContext.window = (W) nextChildWindow;
+			registerCleanupTimer((W) nextChildWindow);
+			triggerContext.window = (W) accWindow;
+		}
+		return false;
 	}
 
 	/**
@@ -585,6 +728,13 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 	protected boolean isElementLate(StreamRecord<IN> element){
 		return (windowAssigner.isEventTime()) &&
 			(element.getTimestamp() + allowedLateness <= internalTimerService.currentWatermark());
+	}
+
+	// todo
+	protected boolean isAllowedLateness(W window) {
+		return (windowAssigner.isEventTime()) &&
+			(window.maxTimestamp() <= internalTimerService.currentWatermark()) &&
+			allowedLateness > 0;
 	}
 
 	/**

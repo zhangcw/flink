@@ -66,6 +66,7 @@ under the License.
 		<dependency>
 			<groupId>org.apache.flink</groupId>
 			<artifactId>flink-test-utils-junit</artifactId>
+			<version>${parent.version}</version>
 		</dependency>
 	</dependencies>
 </project>

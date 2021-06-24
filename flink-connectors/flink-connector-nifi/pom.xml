@@ -47,15 +47,15 @@ under the License.
             <version>${nifi.version}</version>
         </dependency>
         <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
-            <version>${project.version}</version>
+			<groupId>com.tencent.bk.base.dataflow</groupId>
+			<artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
+			<version>${bk.base.version}</version>
 			<scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
-            <version>${project.version}</version>
+			<groupId>com.tencent.bk.base.dataflow</groupId>
+			<artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
+			<version>${bk.base.version}</version>
             <scope>test</scope>
             <type>test-jar</type>
         </dependency>
