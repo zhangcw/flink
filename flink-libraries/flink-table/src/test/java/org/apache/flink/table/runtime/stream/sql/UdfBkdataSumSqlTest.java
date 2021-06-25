@@ -41,6 +41,9 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * sum函数测试.
+ */
 public class UdfBkdataSumSqlTest extends AbstractTestBase {
 
 	@Test

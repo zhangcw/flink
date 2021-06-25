@@ -40,6 +40,9 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * first/last函数测试.
+ */
 public class UdfBkdataFirstLastSqlTest extends AbstractTestBase {
 
 	@Test

@@ -31,6 +31,9 @@ import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.junit.Assert.assertThat;
 import static org.mockito.Mockito.mock;
 
+/**
+ * 基于数据时间的累加窗口测试.
+ */
 public class AccumulateEventTimeWindowsTest extends TestLogger {
 
 	@Test
