@@ -520,6 +520,10 @@ public class Fabric8FlinkKubeClient implements FlinkKubeClient {
             // only consider IPs with the configured address type.
             address =
                     internalClient.nodes().list().getItems().stream()
+                            .filter(
+                                    node ->
+                                            node.getSpec().getUnschedulable() == null
+                                                    || !node.getSpec().getUnschedulable())
                             .flatMap(node -> node.getStatus().getAddresses().stream())
                             .filter(
                                     nodeAddress ->
