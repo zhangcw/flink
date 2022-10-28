@@ -32,6 +32,7 @@ import org.apache.flink.metrics.MeterView;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.runtime.state.internal.InternalMergingState;
 import org.apache.flink.runtime.state.internal.InternalValueState;
+
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
 import org.apache.flink.streaming.api.operators.ChainingStrategy;
 import org.apache.flink.streaming.api.operators.InternalTimer;
@@ -52,6 +53,7 @@ import org.apache.flink.table.runtime.operators.window.internal.GeneralWindowPro
 import org.apache.flink.table.runtime.operators.window.internal.InternalWindowProcessFunction;
 import org.apache.flink.table.runtime.operators.window.internal.MergingWindowProcessFunction;
 import org.apache.flink.table.runtime.operators.window.internal.PanedWindowProcessFunction;
+import org.apache.flink.table.runtime.operators.window.triggers.EventTimeTriggers;
 import org.apache.flink.table.runtime.operators.window.triggers.Trigger;
 import org.apache.flink.table.runtime.typeutils.RowDataSerializer;
 import org.apache.flink.table.runtime.util.TimeWindowUtil;
@@ -369,9 +371,17 @@ public abstract class WindowOperator<K, W extends Window> extends AbstractStream
             boolean triggerResult = triggerContext.onElement(inputRow, timestamp);
             if (triggerResult) {
                 emitWindowResult(window);
+                if (trigger instanceof EventTimeTriggers.AllowedLatenessSessionEventTimeTrigger) {
+                    //对于session窗口开启了延迟计算，需要立即执行 FIRE_AND_PURGE
+                    cleanWindowOnLateness(window);
+                }
             }
-            // register a clean up timer for the window
-            registerCleanupTimer(window);
+
+            // 开启延迟计算时候不需要注册清理，每次emitWindowResult后都清理了
+            if(allowedLateness == 0) {
+                // register a clean up timer for the window
+                registerCleanupTimer(window);
+            }
         }
 
         if (isElementDropped) {
@@ -386,12 +396,20 @@ public abstract class WindowOperator<K, W extends Window> extends AbstractStream
 
         triggerContext.window = timer.getNamespace();
         if (triggerContext.onEventTime(timer.getTimestamp())) {
-            // fire
             emitWindowResult(triggerContext.window);
+            // 认为onEventTime is true 等同于 低版本的 FIRE_AND_PURGE，执行清理数据
+            if (cleanWindowOnLateness(triggerContext.window)) {
+                return;
+            }
         }
 
         if (windowAssigner.isEventTime()) {
-            windowFunction.cleanWindowIfNeeded(triggerContext.window, timer.getTimestamp());
+            //只要设置了延迟计算，当前窗口并不是触发之后立即清理，而是在窗口结束时间+延迟时间到了之后再清理
+            //这会对我们的延迟计算单独开窗汇总造成影响，我们需要及时清理，而不是延迟清理
+            //开启延迟计算时，(窗口结束时间+延迟时间) 不再重复清理数据，因为registerCleanupTimer没有注册啦
+            if (allowedLateness == 0){
+                windowFunction.cleanWindowIfNeeded(triggerContext.window, timer.getTimestamp());
+            }
         }
     }
 
@@ -401,13 +419,30 @@ public abstract class WindowOperator<K, W extends Window> extends AbstractStream
 
         triggerContext.window = timer.getNamespace();
         if (triggerContext.onProcessingTime(timer.getTimestamp())) {
-            // fire
             emitWindowResult(triggerContext.window);
+            // 认为onEventTime is true 等同于 低版本的 FIRE_AND_PURGE，执行清理数据
+            if (cleanWindowOnLateness(triggerContext.window)) {
+                return;
+            }
         }
 
         if (!windowAssigner.isEventTime()) {
+            //只要设置了延迟计算，当前窗口并不是触发之后立即清理，而是在窗口结束时间+延迟时间到了之后再清理
+            //这会对我们的延迟计算单独开窗汇总造成影响，我们需要及时清理，而不是延迟清理
+            //开启延迟计算时，(窗口结束时间+延迟时间) 不再重复清理数据
             windowFunction.cleanWindowIfNeeded(triggerContext.window, timer.getTimestamp());
         }
+    }
+
+    /** 延迟数据计算后清理窗口数据状态，防止重复推出 */
+    private boolean cleanWindowOnLateness(W window) throws Exception {
+        if (trigger instanceof EventTimeTriggers.AllowedLatenessEventTimeTrigger
+                || trigger instanceof EventTimeTriggers.ProcessingTimeAndEventTimeTrigger
+                || trigger instanceof EventTimeTriggers.AllowedLatenessSessionEventTimeTrigger) {
+            windowFunction.cleanWindowForce(window);
+            return true;
+        }
+        return false;
     }
 
     /** Emits the window result of the given window. */
