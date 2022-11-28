@@ -26,6 +26,7 @@ import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.core.memory.ManagedMemoryUseCase;
+import org.apache.flink.runtime.jobgraph.JobVertex;
 import org.apache.flink.runtime.jobgraph.OperatorID;
 import org.apache.flink.runtime.operators.util.CorruptConfigurationException;
 import org.apache.flink.runtime.state.CheckpointStorage;
@@ -44,6 +45,7 @@ import org.apache.flink.util.InstantiationUtil;
 import org.apache.flink.util.OutputTag;
 import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.TernaryBoolean;
+import org.apache.flink.util.concurrent.FutureUtils;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -54,6 +56,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
@@ -87,8 +92,11 @@ public class StreamConfig implements Serializable {
     private static final String TYPE_SERIALIZER_OUT_1 = "typeSerializer_out";
     private static final String TYPE_SERIALIZER_SIDEOUT_PREFIX = "typeSerializer_sideout_";
     private static final String ITERATON_WAIT = "iterationWait";
+    private static final String OP_NONCHAINED_OUTPUTS = "opNonChainedOutputs";
+
     private static final String NONCHAINED_OUTPUTS = "nonChainedOutputs";
     private static final String EDGES_IN_ORDER = "edgesInOrder";
+    private static final String VERTEX_NONCHAINED_OUTPUTS = "vertexNonChainedOutputs";
     private static final String IN_STREAM_EDGES = "inStreamEdges";
     private static final String OPERATOR_NAME = "operatorName";
     private static final String OPERATOR_ID = "operatorID";
@@ -132,12 +140,75 @@ public class StreamConfig implements Serializable {
 
     private final Configuration config;
 
+    private final transient Map<String, Object> toBeSerializedConfigObjects = new HashMap<>();
+    private final transient Map<Integer, CompletableFuture<StreamConfig>> chainedTaskFutures =
+            new HashMap<>();
+    private final transient CompletableFuture<StreamConfig> serializationFuture =
+            new CompletableFuture<>();
     public StreamConfig(Configuration config) {
         this.config = config;
     }
 
     public Configuration getConfiguration() {
         return config;
+    }
+
+    public CompletableFuture<StreamConfig> getSerializationFuture() {
+        return serializationFuture;
+    }
+
+    /** Trigger the object config serialization and return the completable future. */
+    public CompletableFuture<StreamConfig> triggerSerializationAndReturnFuture(
+            Executor ioExecutor) {
+        FutureUtils.combineAll(chainedTaskFutures.values())
+                .thenAcceptAsync(
+                        chainedConfigs -> {
+                            try {
+                                // Serialize all the objects to config.
+                                serializeAllConfigs();
+                                InstantiationUtil.writeObjectToConfig(
+                                        chainedConfigs.stream()
+                                                .collect(
+                                                        Collectors.toMap(
+                                                                StreamConfig::getVertexID,
+                                                                Function.identity())),
+                                        this.config,
+                                        CHAINED_TASK_CONFIG);
+                                serializationFuture.complete(this);
+                            } catch (Throwable throwable) {
+                                serializationFuture.completeExceptionally(throwable);
+                            }
+                        },
+                        ioExecutor);
+        return serializationFuture;
+    }
+
+    /**
+     * Serialize all object configs synchronously. Only used for operators which need to reconstruct
+     * the StreamConfig internally or test.
+     */
+    public void serializeAllConfigs() {
+        toBeSerializedConfigObjects.forEach(
+                (key, object) -> {
+                    try {
+                        InstantiationUtil.writeObjectToConfig(object, this.config, key);
+                    } catch (IOException e) {
+                        throw new StreamTaskException(
+                                String.format("Could not serialize object for key %s.", key), e);
+                    }
+                });
+    }
+
+    @VisibleForTesting
+    public void setAndSerializeTransitiveChainedTaskConfigs(
+            Map<Integer, StreamConfig> chainedTaskConfigs) {
+        try {
+            InstantiationUtil.writeObjectToConfig(
+                    chainedTaskConfigs, this.config, CHAINED_TASK_CONFIG);
+        } catch (IOException e) {
+            throw new StreamTaskException(
+                    "Could not serialize object for key chained task config.", e);
+        }
     }
 
     // ------------------------------------------------------------------------
@@ -373,6 +444,11 @@ public class StreamConfig implements Serializable {
         return config.getInteger(NUMBER_OF_OUTPUTS, 0);
     }
 
+    /** Sets the operator level non-chained outputs. */
+    public void setOperatorNonChainedOutputs(List<NonChainedOutput> nonChainedOutputs) {
+        toBeSerializedConfigObjects.put(OP_NONCHAINED_OUTPUTS, nonChainedOutputs);
+    }
+
     public void setNonChainedOutputs(List<StreamEdge> outputvertexIDs) {
         try {
             InstantiationUtil.writeObjectToConfig(outputvertexIDs, this.config, NONCHAINED_OUTPUTS);
@@ -469,6 +545,36 @@ public class StreamConfig implements Serializable {
     public void setAlignedCheckpointTimeout(Duration alignedCheckpointTimeout) {
         config.set(
                 ExecutionCheckpointingOptions.ALIGNED_CHECKPOINT_TIMEOUT, alignedCheckpointTimeout);
+    }
+
+    public void setMaxConcurrentCheckpoints(int maxConcurrentCheckpoints) {
+        config.setInteger(
+                ExecutionCheckpointingOptions.MAX_CONCURRENT_CHECKPOINTS, maxConcurrentCheckpoints);
+    }
+
+    public int getMaxConcurrentCheckpoints() {
+        return config.getInteger(
+                ExecutionCheckpointingOptions.MAX_CONCURRENT_CHECKPOINTS,
+                ExecutionCheckpointingOptions.MAX_CONCURRENT_CHECKPOINTS.defaultValue());
+    }
+
+    /**
+     * Sets the job vertex level non-chained outputs. The given output list must have the same order
+     * with {@link JobVertex#getProducedDataSets()}.
+     */
+    public void setVertexNonChainedOutputs(List<NonChainedOutput> nonChainedOutputs) {
+        toBeSerializedConfigObjects.put(VERTEX_NONCHAINED_OUTPUTS, nonChainedOutputs);
+    }
+
+    public List<NonChainedOutput> getVertexNonChainedOutputs(ClassLoader cl) {
+        try {
+            List<NonChainedOutput> nonChainedOutputs =
+                    InstantiationUtil.readObjectFromConfig(
+                            this.config, VERTEX_NONCHAINED_OUTPUTS, cl);
+            return nonChainedOutputs == null ? new ArrayList<>() : nonChainedOutputs;
+        } catch (Exception e) {
+            throw new StreamTaskException("Could not instantiate outputs in order.", e);
+        }
     }
 
     public void setOutEdgesInOrder(List<StreamEdge> outEdgeList) {

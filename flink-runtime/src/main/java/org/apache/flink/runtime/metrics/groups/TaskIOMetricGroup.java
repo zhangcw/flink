@@ -20,11 +20,13 @@ package org.apache.flink.runtime.metrics.groups;
 
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Gauge;
+import org.apache.flink.metrics.Histogram;
 import org.apache.flink.metrics.Meter;
 import org.apache.flink.metrics.MeterView;
 import org.apache.flink.metrics.SimpleCounter;
 import org.apache.flink.runtime.executiongraph.IOMetrics;
 import org.apache.flink.runtime.jobgraph.IntermediateResultPartitionID;
+import org.apache.flink.runtime.metrics.DescriptiveStatisticsHistogram;
 import org.apache.flink.runtime.metrics.MetricNames;
 import org.apache.flink.runtime.metrics.TimerGauge;
 
@@ -44,6 +46,7 @@ public class TaskIOMetricGroup extends ProxyMetricGroup<TaskMetricGroup> {
     private final SumCounter numRecordsIn;
     private final SumCounter numRecordsOut;
     private final Counter numBuffersOut;
+    private final Counter numMailsProcessed;
 
     private final Meter numBytesInRate;
     private final Meter numBytesOutRate;
@@ -57,7 +60,9 @@ public class TaskIOMetricGroup extends ProxyMetricGroup<TaskMetricGroup> {
     private final TimerGauge hardBackPressuredTimePerSecond;
     private final Gauge<Long> maxSoftBackPressuredTime;
     private final Gauge<Long> maxHardBackPressuredTime;
-
+    private final Meter mailboxThroughput;
+    private final Histogram mailboxLatency;
+    private final SizeGauge mailboxSize;
     private volatile boolean busyTimeEnabled;
 
     private final Map<IntermediateResultPartitionID, Counter> numBytesProducedOfPartitions =
@@ -100,6 +105,13 @@ public class TaskIOMetricGroup extends ProxyMetricGroup<TaskMetricGroup> {
                         hardBackPressuredTimePerSecond::getMaxSingleMeasurement);
 
         this.busyTimePerSecond = gauge(MetricNames.TASK_BUSY_TIME, this::getBusyTimePerSecond);
+
+        this.numMailsProcessed = new SimpleCounter();
+        this.mailboxThroughput =
+                meter(MetricNames.MAILBOX_THROUGHPUT, new MeterView(numMailsProcessed));
+        this.mailboxLatency =
+                histogram(MetricNames.MAILBOX_LATENCY, new DescriptiveStatisticsHistogram(60));
+        this.mailboxSize = gauge(MetricNames.MAILBOX_SIZE, new SizeGauge());
     }
 
     public IOMetrics createSnapshot() {
@@ -161,6 +173,18 @@ public class TaskIOMetricGroup extends ProxyMetricGroup<TaskMetricGroup> {
         return busyTimeEnabled ? 1000.0 - Math.min(busyTime, 1000.0) : Double.NaN;
     }
 
+    public Meter getMailboxThroughput() {
+        return mailboxThroughput;
+    }
+
+    public Histogram getMailboxLatency() {
+        return mailboxLatency;
+    }
+
+    public Gauge<Integer> getMailboxSize() {
+        return mailboxSize;
+    }
+
     // ============================================================================================
     // Metric Reuse
     // ============================================================================================
@@ -197,6 +221,28 @@ public class TaskIOMetricGroup extends ProxyMetricGroup<TaskMetricGroup> {
                 sum += counter.getCount();
             }
             return sum;
+        }
+    }
+
+    private static class SizeGauge implements Gauge<Integer> {
+        private SizeSupplier<Integer> supplier;
+
+        @FunctionalInterface
+        public interface SizeSupplier<R> {
+            R get();
+        }
+
+        public void registerSupplier(SizeSupplier<Integer> supplier) {
+            this.supplier = supplier;
+        }
+
+        @Override
+        public Integer getValue() {
+            if (supplier != null) {
+                return supplier.get();
+            } else {
+                return 0; // return "assumed" empty queue size
+            }
         }
     }
 }

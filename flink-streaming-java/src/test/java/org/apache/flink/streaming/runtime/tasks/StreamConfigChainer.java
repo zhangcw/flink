@@ -21,7 +21,10 @@ package org.apache.flink.streaming.runtime.tasks;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.memory.ManagedMemoryUseCase;
+import org.apache.flink.runtime.io.network.partition.ResultPartitionType;
+import org.apache.flink.runtime.jobgraph.IntermediateDataSetID;
 import org.apache.flink.runtime.jobgraph.OperatorID;
+import org.apache.flink.streaming.api.graph.NonChainedOutput;
 import org.apache.flink.streaming.api.graph.StreamConfig;
 import org.apache.flink.streaming.api.graph.StreamEdge;
 import org.apache.flink.streaming.api.graph.StreamNode;
@@ -32,6 +35,7 @@ import org.apache.flink.streaming.api.operators.SimpleOperatorFactory;
 import org.apache.flink.streaming.api.operators.StreamOperator;
 import org.apache.flink.streaming.api.operators.StreamOperatorFactory;
 import org.apache.flink.streaming.runtime.partitioner.BroadcastPartitioner;
+import org.apache.flink.streaming.runtime.partitioner.StreamPartitioner;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -198,6 +202,11 @@ public class StreamConfigChainer<OWNER> {
     }
 
     public <OUT> OWNER finishForSingletonOperatorChain(TypeSerializer<OUT> outputSerializer) {
+        return finishForSingletonOperatorChain(outputSerializer, new BroadcastPartitioner<>());
+    }
+
+    public <OUT> OWNER finishForSingletonOperatorChain(
+            TypeSerializer<OUT> outputSerializer, StreamPartitioner<?> partitioner) {
 
         checkState(chainIndex == 0, "Use finishForSingletonOperatorChain");
         checkState(headConfig == tailConfig);
@@ -205,8 +214,7 @@ public class StreamConfigChainer<OWNER> {
                 new AbstractStreamOperator<OUT>() {
                     private static final long serialVersionUID = 1L;
                 };
-        List<StreamEdge> outEdgesInOrder = new LinkedList<>();
-
+        List<NonChainedOutput> streamOutputs = new LinkedList<>();
         StreamNode sourceVertexDummy =
                 new StreamNode(
                         MAIN_NODE_ID,
@@ -216,32 +224,30 @@ public class StreamConfigChainer<OWNER> {
                         "source dummy",
                         SourceStreamTask.class);
         for (int i = 0; i < numberOfNonChainedOutputs; ++i) {
-            StreamNode targetVertexDummy =
-                    new StreamNode(
-                            MAIN_NODE_ID + 1 + i,
-                            "group",
+            streamOutputs.add(
+                    new NonChainedOutput(
+                            true,
+                            sourceVertexDummy.getId(),
+                            1,
+                            1,
+                            100,
+                            false,
+                            new IntermediateDataSetID(),
                             null,
-                            dummyOperator,
-                            "target dummy",
-                            SourceStreamTask.class);
+                            partitioner,
+                            ResultPartitionType.PIPELINED_BOUNDED));
 
-            outEdgesInOrder.add(
-                    new StreamEdge(
-                            sourceVertexDummy,
-                            targetVertexDummy,
-                            0,
-                            new BroadcastPartitioner<>(),
-                            null));
         }
 
         headConfig.setVertexID(0);
         headConfig.setNumberOfOutputs(1);
-        headConfig.setOutEdgesInOrder(outEdgesInOrder);
-        headConfig.setNonChainedOutputs(outEdgesInOrder);
-        headConfig.setTransitiveChainedTaskConfigs(chainedConfigs);
-        headConfig.setOutEdgesInOrder(outEdgesInOrder);
+        headConfig.setVertexNonChainedOutputs(streamOutputs);
+        headConfig.setOperatorNonChainedOutputs(streamOutputs);
+        chainedConfigs.values().forEach(StreamConfig::serializeAllConfigs);
+        headConfig.setAndSerializeTransitiveChainedTaskConfigs(chainedConfigs);
+        headConfig.setVertexNonChainedOutputs(streamOutputs);
         headConfig.setTypeSerializerOut(outputSerializer);
-
+        headConfig.serializeAllConfigs();
         return owner;
     }
 
