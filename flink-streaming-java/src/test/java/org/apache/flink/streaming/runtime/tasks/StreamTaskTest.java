@@ -1931,7 +1931,7 @@ public class StreamTaskTest extends TestLogger {
 
             // Change consumer parallelism
             harness.streamTask.configuration.setVertexNonChainedOutputs(
-                    List.of(
+                    Arrays.asList(
                             new NonChainedOutput(
                                     false,
                                     0,
