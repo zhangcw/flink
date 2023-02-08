@@ -251,6 +251,9 @@ public class KubernetesResourceManagerDriver
     }
 
     private void updateKubernetesServiceTargetPortIfNecessary() throws Exception {
+        if (!KubernetesUtils.isServiceEnabled(flinkConfig)) {
+            return;
+        }
         if (!KubernetesUtils.isHostNetwork(flinkConfig)) {
             return;
         }
