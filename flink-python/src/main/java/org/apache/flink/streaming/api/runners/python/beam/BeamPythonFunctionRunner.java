@@ -287,6 +287,7 @@ public abstract class BeamPythonFunctionRunner implements PythonFunctionRunner {
                             jobBundleFactory, createPythonExecutionEnvironment(config, -1));
         }
         progressHandler = getProgressHandler(flinkMetricContainer);
+        checkInvokeStartBundle();
     }
 
     @Override
